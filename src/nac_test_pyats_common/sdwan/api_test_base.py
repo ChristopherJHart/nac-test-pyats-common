@@ -14,6 +14,7 @@ API call tracking for enhanced HTML reporting.
 """
 
 import asyncio
+import os
 from typing import Any
 
 import httpx
@@ -189,10 +190,16 @@ class SDWANManagerTestBase(NACTestBase):  # type: ignore[misc]
         """
         devices: list[dict[str, Any]] = []
         sdwan = self.data_model.get("sdwan", {})
+        device_tag = os.environ.get("NAC_TEST_DEVICE_TAG")
 
         for site in sdwan.get("sites", []):
             site_id_fallback = site.get("id")
             for router in site.get("routers", []):
+                if device_tag:
+                    tags = router.get("tags") or []
+                    if device_tag not in tags:
+                        continue
+
                 vars_ = router.get("device_variables", {})
                 system_ip = vars_.get("system_ip")
                 if not system_ip:
