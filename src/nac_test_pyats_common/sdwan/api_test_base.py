@@ -211,11 +211,13 @@ class SDWANManagerTestBase(NACTestBase):  # type: ignore[misc]
                     or vars_.get("system_hostname")
                     or str(system_ip)
                 )
-                devices.append({
-                    "system_ip": system_ip,
-                    "site_id": site_id,
-                    "hostname": hostname,
-                })
+                devices.append(
+                    {
+                        "system_ip": system_ip,
+                        "site_id": site_id,
+                        "hostname": hostname,
+                    }
+                )
 
         return devices
 
