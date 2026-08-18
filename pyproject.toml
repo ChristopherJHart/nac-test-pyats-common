@@ -29,6 +29,9 @@ keywords = ["cisco", "network", "testing", "pyats", "nac", "aci", "sdwan", "cata
 dependencies = [
     "filelock>=3.25.2",
     "httpx~=0.28",  # HTTP client for auth
+    # 0.7.0 restored Python 3.10 support; 0.6.0 required >=3.11 and would force
+    # this package's requires-python floor up with it.
+    "muninn-parsers>=0.7.0",
     "nac-test>=2.0.0",
 ]
 
