@@ -332,10 +332,13 @@ class TestGetDevicesFromDataModel:
 
         assert devices == []
 
-    def test_host_name_takes_priority_over_system_hostname(
+    def test_system_hostname_takes_priority_over_host_name(
         self, make_base_instance: _MakeInstance
     ) -> None:
-        """host_name (UX 2.0) is preferred over system_hostname (UX 1.0)."""
+        """system_hostname (UX 1.0) is preferred over host_name (UX 2.0).
+
+        Aligns with SDWANDeviceResolver.extract_hostname() priority.
+        """
         data_model = {
             "sdwan": {
                 "sites": [
@@ -357,4 +360,30 @@ class TestGetDevicesFromDataModel:
         instance = make_base_instance(data_model)
         devices = instance.get_devices_from_data_model()
 
-        assert devices[0]["hostname"] == "ux2-name"
+        assert devices[0]["hostname"] == "ux1-name"
+
+    def test_site_id_is_none_when_absent_everywhere(
+        self, make_base_instance: _MakeInstance
+    ) -> None:
+        """site_id is None when neither device_variables nor site provides it."""
+        data_model = {
+            "sdwan": {
+                "sites": [
+                    {
+                        "routers": [
+                            {
+                                "device_variables": {
+                                    "system_ip": "10.0.0.1",
+                                    "host_name": "router1",
+                                },
+                            },
+                        ],
+                    },
+                ],
+            },
+        }
+        instance = make_base_instance(data_model)
+        devices = instance.get_devices_from_data_model()
+
+        assert len(devices) == 1
+        assert devices[0]["site_id"] is None

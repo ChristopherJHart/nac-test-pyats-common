@@ -171,8 +171,8 @@ class SDWANManagerTestBase(NACTestBase):  # type: ignore[misc]
                     - device_variables:
                         system_ip: "10.0.0.1"
                         site_id: 100
-                        host_name: "router1"         # UX 2.0
                         system_hostname: "router1"   # UX 1.0
+                        host_name: "router1"         # UX 2.0
 
         Returns:
             List of dictionaries, each containing:
@@ -200,8 +200,8 @@ class SDWANManagerTestBase(NACTestBase):  # type: ignore[misc]
 
                 site_id = vars_.get("site_id") or site_id_fallback
                 hostname = (
-                    vars_.get("host_name")
-                    or vars_.get("system_hostname")
+                    vars_.get("system_hostname")
+                    or vars_.get("host_name")
                     or str(system_ip)
                 )
                 devices.append(
