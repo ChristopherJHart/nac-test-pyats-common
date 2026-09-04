@@ -13,14 +13,15 @@ methods are supported:
 2. **Session auth** (all versions): Form-based login with JSESSIONID cookie and
    optional XSRF token for CSRF protection.
 
-The auth method is determined by `get_matched_credential_set()` from nac-test's
+The auth method is determined by `get_controller_context()` from nac-test's
 controller detection module.
 
 The module implements a multi-tier API design:
 1. _authenticate() - Low-level: direct SDWAN Manager session auth
-2. _get_token_auth() - Low-level method for JWT-based token authentication
-3. _get_session_auth() - Low-level method for session-based authentication
-4. get_auth() - High-level method that routes to the appropriate auth method
+2. get_token_auth() - Parameterized method for JWT-based token authentication
+3. get_session_auth() - Parameterized method for session-based authentication
+4. get_auth() - High-level method that sources env vars via nac-test's
+   get_connection_params() and routes to the appropriate auth method
 
 This design ensures efficient session management by reusing valid sessions and only
 re-authenticating when necessary, reducing unnecessary API calls to the SDWAN Manager.
@@ -35,21 +36,18 @@ Note on Fork Safety:
 import base64
 import json
 import logging
-import os
 from typing import Any
 
-from nac_test.pyats_core.common.auth_cache import AuthCache
+from nac_test.core.auth_cache import AuthCache
+from nac_test.core.controller import (
+    get_connection_params,
+    get_controller_context,
+    should_verify_ssl,
+)
 from nac_test.pyats_core.common.subprocess_auth import (
     SubprocessAuthError,  # noqa: F401 - re-exported for callers to catch
     execute_auth_subprocess,
 )
-
-from nac_test_pyats_common.common.env import require_env_vars
-
-try:
-    from nac_test.utils.controller import get_matched_credential_set
-except ImportError:
-    get_matched_credential_set = None  # type: ignore[assignment]
 
 logger = logging.getLogger(__name__)
 
@@ -201,12 +199,14 @@ class SDWANManagerAuth:
     1. High-level get_auth() method: Routes to the appropriate auth method based
        on the credential set matched by nac-test's controller detection. This is
        the primary method that consumers should use.
-    2. _get_token_auth(): JWT-based Bearer authentication (SD-WAN Manager 20.18+).
-       Extracts the CSRF token from the JWT payload. No network call required.
-    3. _get_session_auth(): Form-based login with cached session management via
-       AuthCache. Automatically handles session renewal when expired.
+    2. get_token_auth(): Parameterized JWT-based Bearer authentication (SD-WAN
+       Manager 20.18+). Extracts the CSRF token from the JWT payload. No network
+       call required.
+    3. get_session_auth(): Parameterized form-based login with cached session
+       management via AuthCache. Automatically handles session renewal when
+       expired.
     4. _authenticate(): Low-level subprocess-based session auth. Used internally
-       by _get_session_auth() via AuthCache.
+       by get_session_auth() via AuthCache.
 
     The authentication flow supports:
     - 20.18+ versions: Bearer token auth with CSRF from JWT payload
@@ -288,7 +288,7 @@ class SDWANManagerAuth:
 
         This is the primary method that consumers should use to obtain SDWAN Manager
         authentication data. It consults the credential set matched by nac-test's
-        detect_controller_type() to determine the authentication mechanism:
+        get_controller_context() to determine the authentication mechanism:
 
         - **Token auth** (auth_method="token"): Uses SDWAN_API_TOKEN directly.
           No session login required. Returns immediately with the bearer token.
@@ -345,44 +345,42 @@ class SDWANManagerAuth:
             'session'
             >>> headers = {"Cookie": f"JSESSIONID={auth_data['jsessionid']}"}
         """
-        # Determine auth method from the credential set matched during detection
-        if get_matched_credential_set is not None:
-            matched = get_matched_credential_set("SDWAN")
-            auth_method = matched.auth_method if matched else "session"
-        else:
-            logger.warning(
-                "nac_test.utils.controller.get_matched_credential_set is not "
-                "available — falling back to session auth. This usually "
-                "indicates a nac-test version mismatch or incomplete installation."
-            )
-            auth_method = "session"
+        # Determine auth method from controller context resolved by orchestrator.
+        # get_controller_context() has its own fallback path for standalone
+        # usage (env var scan), so no local fallback is needed here.
+        ctx = get_controller_context()
+        auth_method = ctx.auth_method
+
+        params = get_connection_params("SDWAN", auth_method)
 
         if auth_method == "token":
-            return cls._get_token_auth()
+            return cls.get_token_auth(params["token"])
 
-        return cls._get_session_auth()
+        return cls.get_session_auth(
+            params["url"], params["username"], params["password"]
+        )
 
     @classmethod
-    def _get_token_auth(cls) -> dict[str, Any]:
+    def get_token_auth(cls, api_token: str) -> dict[str, Any]:
         """Get token-based authentication data (SD-WAN Manager 20.18+).
 
-        Reads SDWAN_API_TOKEN from the environment and decodes the JWT payload
-        to extract the CSRF token. No network call or caching required.
+        Decodes the JWT payload to extract the CSRF token. No network call
+        or caching required.
 
         The JWT payload is expected to contain a 'csrf' field which must be
         sent as the X-XSRF-TOKEN header alongside the Bearer Authorization
         header on API requests.
 
+        Args:
+            api_token: The SDWAN Manager API bearer token (JWT).
+
         Returns:
             Dictionary with auth_method="token", api_token, and csrf_token.
 
         Raises:
-            ValueError: If SDWAN_URL or SDWAN_API_TOKEN is not set, or if the
-                token is not a valid JWT or is missing the 'csrf' field.
+            ValueError: If the token is not a valid JWT or is missing the
+                'csrf' field.
         """
-        env = require_env_vars("SDWAN_URL", "SDWAN_API_TOKEN")
-        api_token = env["SDWAN_API_TOKEN"]
-
         # Decode JWT payload to extract CSRF token
         parts = api_token.split(".")
         if len(parts) != 3:  # noqa: PLR2004
@@ -422,31 +420,25 @@ class SDWANManagerAuth:
         }
 
     @classmethod
-    def _get_session_auth(cls) -> dict[str, Any]:
+    def get_session_auth(cls, url: str, username: str, password: str) -> dict[str, Any]:
         """Get session-based authentication data (username/password login).
 
         Performs form-based login to obtain JSESSIONID and optional XSRF token,
         with caching via AuthCache for session reuse.
 
+        Args:
+            url: Base URL of the SDWAN Manager.
+            username: SDWAN Manager username for authentication.
+            password: Password for the specified user account.
+
         Returns:
             Dictionary with auth_method="session", jsessionid, and xsrf_token.
 
         Raises:
-            ValueError: If SDWAN_URL, SDWAN_USERNAME, or SDWAN_PASSWORD is not set.
             SubprocessAuthError: If authentication fails.
         """
-        env = require_env_vars("SDWAN_URL", "SDWAN_USERNAME", "SDWAN_PASSWORD")
-        url = env["SDWAN_URL"].rstrip("/")
-        username = env["SDWAN_USERNAME"]
-        password = env["SDWAN_PASSWORD"]
-        insecure = os.environ.get("SDWAN_INSECURE", "True").lower() in (
-            "true",
-            "1",
-            "yes",
-        )
-
-        # SDWAN_INSECURE=True means verify_ssl=False
-        verify_ssl = not insecure
+        url = url.rstrip("/")
+        verify_ssl = should_verify_ssl("SDWAN")
 
         def auth_wrapper() -> tuple[dict[str, Any], int]:
             """Wrapper for authentication that captures closure variables."""

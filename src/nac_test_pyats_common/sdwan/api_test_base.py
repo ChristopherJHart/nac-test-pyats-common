@@ -17,6 +17,7 @@ import asyncio
 from typing import Any
 
 import httpx
+from nac_test.core.controller import should_verify_ssl
 from nac_test.pyats_core.common.base_test import (
     NACTestBase,  # type: ignore[import-untyped]
 )
@@ -47,7 +48,8 @@ class SDWANManagerTestBase(NACTestBase):  # type: ignore[misc]
             Contains auth_method plus mode-specific keys (api_token/csrf_token
             for token auth, jsessionid/xsrf_token for session auth).
         client (httpx.AsyncClient | None): Wrapped async HTTP client configured for
-            SDWAN Manager. Initialized to None, set during run_async_verification_test().
+            SDWAN Manager. Initialized to None, set during
+            run_async_verification_test().
         controller_url (str): Base URL of the SDWAN Manager (inherited).
 
     Methods:
@@ -73,6 +75,9 @@ class SDWANManagerTestBase(NACTestBase):  # type: ignore[misc]
     client: httpx.AsyncClient | None = None  # MUST declare at class level
     auth_data: dict[str, Any]  # Declared at class level for type checker compatibility
 
+    EXPECTED_CONTROLLER_TYPE = "SDWAN"
+    SUPPORTED_AUTH_METHODS = {"session", "token"}
+
     @aetest.setup  # type: ignore[misc, untyped-decorator]
     def setup(self) -> None:
         """Setup method that extends the generic base class setup.
@@ -93,11 +98,22 @@ class SDWANManagerTestBase(NACTestBase):  # type: ignore[misc]
         """
         super().setup()
 
+        self.verify_ssl = should_verify_ssl("SDWAN")
+
         # Get shared SDWAN Manager auth data (jsessionid, xsrf_token)
         # This reads from file cache - no httpx client creation here
         try:
-            self.auth_data = SDWANManagerAuth.get_auth()
-        except (RuntimeError, ValueError) as e:
+            if self.auth_method == "token":
+                self.auth_data = SDWANManagerAuth.get_token_auth(
+                    self.connection_params["token"]
+                )
+            else:
+                self.auth_data = SDWANManagerAuth.get_session_auth(
+                    self.controller_url,
+                    self.username,
+                    self.password,
+                )
+        except (RuntimeError, ValueError, KeyError) as e:
             # Convert auth failures to FAILED (not ERRORED) - auth issues are
             # expected failure conditions, not infrastructure errors
             self.auth_data = {}  # Ensure attribute exists for cleanup code
@@ -123,13 +139,15 @@ class SDWANManagerTestBase(NACTestBase):  # type: ignore[misc]
 
         Returns:
             httpx.AsyncClient: Configured client with SDWAN Manager auth headers,
-                base URL, and wrapped for automatic API call tracking. The client
-                has SSL verification disabled for lab environment compatibility.
+                base URL, and wrapped for automatic API call tracking. SSL verification
+                is controlled by the SDWAN_INSECURE env var (defaults to insecure for
+                lab compatibility).
 
         Note:
-            SSL verification is disabled (verify=False) to support lab environments
-            with self-signed certificates. For production environments, consider
-            enabling SSL verification with proper certificate management.
+            SSL verification can be disabled via SDWAN_INSECURE=True (default) to
+            support lab environments with self-signed certificates. For production
+            environments, set SDWAN_INSECURE=False to enable SSL verification with
+            proper certificate management.
         """
         headers: dict[str, str] = {"Content-Type": "application/json"}
 
@@ -147,9 +165,9 @@ class SDWANManagerTestBase(NACTestBase):  # type: ignore[misc]
         else:
             raise ValueError(f"Unsupported auth_method: {auth_method!r}")
 
-        # Get base client from pool with SSL verification disabled for lab compatibility
+        # Get base client from pool with SSL verification controlled by env var
         base_client = self.pool.get_client(
-            base_url=self.controller_url, headers=headers, verify=False
+            base_url=self.controller_url, headers=headers, verify=self.verify_ssl
         )
 
         # Use the generic tracking wrapper from base class

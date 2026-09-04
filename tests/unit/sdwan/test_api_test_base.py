@@ -3,16 +3,23 @@
 
 """Unit tests for SDWANManagerTestBase.
 
-Tests cover:
-- Header construction in get_sdwan_manager_client() (token auth, session auth)
-- Data model navigation in get_devices_from_data_model()
+Tests that get_sdwan_manager_client() builds correct HTTP headers for:
+1. Token auth (Bearer + X-XSRF-TOKEN from JWT)
+2. Session auth with XSRF token (JSESSIONID cookie + X-XSRF-TOKEN)
+3. Session auth without XSRF token (JSESSIONID cookie only, pre-19.2)
+4. Unsupported auth_method raises ValueError
+
+Also tests setup()'s auth flow (token vs. session routing, auth failure
+handling). The controller_type mismatch guard is covered once for all
+architectures in tests/unit/test_pyats_test_base_contract.py.
 """
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from typing import Any
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
+from pyats.aetest.signals import AEtestFailedSignal
 from pytest_mock import MockerFixture
 
 from nac_test_pyats_common.sdwan.api_test_base import SDWANManagerTestBase
@@ -26,6 +33,7 @@ def test_base(mocker: MockerFixture) -> SDWANManagerTestBase:
     """Create a SDWANManagerTestBase instance with mocked internals."""
     instance = SDWANManagerTestBase.__new__(SDWANManagerTestBase)
     instance.controller_url = "https://sdwan.example.com"
+    instance.verify_ssl = False  # Default for tests
 
     # Mock pool.get_client to capture the headers passed to it
     mock_pool = MagicMock()
@@ -387,3 +395,76 @@ class TestGetDevicesFromDataModel:
 
         assert len(devices) == 1
         assert devices[0]["site_id"] is None
+
+
+@pytest.fixture
+def test_instance(
+    make_pyats_instance: Callable[[type], SDWANManagerTestBase],
+) -> Iterator[SDWANManagerTestBase]:
+    """A SDWANManagerTestBase instance with load_data_model pre-patched."""
+    instance = make_pyats_instance(SDWANManagerTestBase)
+    with patch.object(instance, "load_data_model", return_value={"test": "data"}):
+        yield instance
+
+
+class TestSDWANManagerTestBaseSetup:
+    """Test SDWANManagerTestBase.setup() auth flow."""
+
+    def test_setup_routes_to_session_auth(
+        self, test_instance: SDWANManagerTestBase, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """setup() calls get_session_auth() for username/password credentials."""
+        monkeypatch.setenv("SDWAN_URL", "https://sdwan.example.com")
+        monkeypatch.setenv("SDWAN_USERNAME", "admin")
+        monkeypatch.setenv("SDWAN_PASSWORD", "password")
+
+        with patch(
+            "nac_test_pyats_common.sdwan.api_test_base.SDWANManagerAuth.get_session_auth",
+            return_value={"auth_method": "session", "jsessionid": "sess-abc"},
+        ) as mock_get_session_auth:
+            test_instance.setup()
+
+        assert test_instance.auth_data == {
+            "auth_method": "session",
+            "jsessionid": "sess-abc",
+        }
+        mock_get_session_auth.assert_called_once_with(
+            "https://sdwan.example.com", "admin", "password"
+        )
+
+    def test_setup_routes_to_token_auth(
+        self, test_instance: SDWANManagerTestBase, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """setup() calls get_token_auth() when nac-test resolved auth_method=token."""
+        monkeypatch.setenv("SDWAN_URL", "https://sdwan.example.com")
+        monkeypatch.setenv("SDWAN_API_TOKEN", "my-jwt-token")
+
+        with patch(
+            "nac_test_pyats_common.sdwan.api_test_base.SDWANManagerAuth.get_token_auth",
+            return_value={"auth_method": "token", "api_token": "my-jwt-token"},
+        ) as mock_get_token_auth:
+            test_instance.setup()
+
+        assert test_instance.auth_data == {
+            "auth_method": "token",
+            "api_token": "my-jwt-token",
+        }
+        mock_get_token_auth.assert_called_once_with("my-jwt-token")
+
+    def test_setup_converts_auth_failure_to_failed(
+        self, test_instance: SDWANManagerTestBase, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Auth errors are converted to FAILED via self.failed(), not raised."""
+        monkeypatch.setenv("SDWAN_URL", "https://sdwan.example.com")
+        monkeypatch.setenv("SDWAN_USERNAME", "admin")
+        monkeypatch.setenv("SDWAN_PASSWORD", "password")
+
+        with patch(
+            "nac_test_pyats_common.sdwan.api_test_base.SDWANManagerAuth.get_session_auth",
+            side_effect=RuntimeError("boom"),
+        ):
+            with pytest.raises(AEtestFailedSignal) as exc_info:
+                test_instance.setup()
+
+        assert "Authentication failed" in str(exc_info.value)
+        assert test_instance.auth_data == {}
