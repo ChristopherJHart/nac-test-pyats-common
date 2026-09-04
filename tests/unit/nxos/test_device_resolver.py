@@ -1,8 +1,6 @@
 # SPDX-License-Identifier: MPL-2.0
 # Copyright (c) 2025 Daniel Schmidt
 
-# SPDX-License-Identifier: MPL-2.0
-
 """Unit tests for NXOSDeviceResolver."""
 
 from typing import Any
@@ -195,6 +193,30 @@ class TestNXOSDeviceResolverValidation:
         resolver = NXOSDeviceResolver(data_model)
         devices = resolver.get_resolved_inventory()
         assert len(devices) == 1
+
+    def test_missing_url_key_skips_device(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Device missing the url key is skipped and tracked."""
+        monkeypatch.setenv("NXOS_USERNAME", "admin")
+        monkeypatch.setenv("NXOS_PASSWORD", "password")
+
+        data_model: dict[str, Any] = {
+            "nxos": {
+                "devices": [
+                    {"name": "N9K-GOOD", "url": "https://10.1.1.1"},
+                    {"name": "N9K-NO-URL"},
+                ]
+            }
+        }
+        resolver = NXOSDeviceResolver(data_model)
+        devices = resolver.get_resolved_inventory()
+
+        assert len(devices) == 1
+        assert devices[0]["hostname"] == "N9K-GOOD"
+
+        assert len(resolver.skipped_devices) == 1
+        assert resolver.skipped_devices[0]["device_id"] == "N9K-NO-URL"
 
 
 class TestNXOSDeviceResolverCredentials:

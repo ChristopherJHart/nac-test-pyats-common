@@ -8,7 +8,7 @@ import os
 import pytest
 from _pytest.monkeypatch import MonkeyPatch
 
-CONTROLLER_ENV_PREFIXES = ("ACI_", "SDWAN_", "CC_", "MERAKI_", "FMC_", "ISE_", "IOSXE_")
+CONTROLLER_ENV_PREFIXES = ("ACI_", "SDWAN_", "CC_", "MERAKI_", "FMC_", "ISE_", "IOSXE_", "NXOS_")
 
 
 @pytest.fixture(autouse=True)
