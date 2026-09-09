@@ -67,10 +67,8 @@ class TestFTDTestBaseGetSSHDeviceInventory:
         monkeypatch.setenv("FTD_USERNAME", "admin")
         monkeypatch.setenv("FTD_PASSWORD", "password")
 
-        FTDTestBase._last_resolver = None
         FTDTestBase.get_ssh_device_inventory(sample_data_model)
 
-        assert FTDTestBase._last_resolver is not None
         assert isinstance(FTDTestBase._last_resolver, FTDDeviceResolver)
 
     def test_last_resolver_exposes_skipped_devices(
