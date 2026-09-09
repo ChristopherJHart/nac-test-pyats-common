@@ -1,8 +1,6 @@
 # SPDX-License-Identifier: MPL-2.0
 # Copyright (c) 2025 Daniel Schmidt
 
-# SPDX-License-Identifier: MPL-2.0
-
 """Unit tests for FTDDeviceResolver."""
 
 from typing import Any
@@ -198,6 +196,42 @@ class TestFTDDeviceResolverCredentials:
         resolver = FTDDeviceResolver(single_domain_data_model)
         with pytest.raises(ValueError, match="Missing required credential"):
             resolver.get_resolved_inventory()
+
+
+class TestFTDDeviceResolverSkippedDevices:
+    """Test skipped_devices path for malformed device entries."""
+
+    def test_device_missing_name_key_is_skipped(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Device missing 'name' key is skipped and recorded."""
+        monkeypatch.setenv("FTD_USERNAME", "admin")
+        monkeypatch.setenv("FTD_PASSWORD", "password")
+
+        data_model = {
+            "fmc": {
+                "domains": [
+                    {
+                        "name": "Global",
+                        "devices": {
+                            "devices": [
+                                {"name": "FTD-GOOD", "host": "10.1.1.100"},
+                                {"host": "10.1.1.200"},  # missing 'name'
+                            ]
+                        },
+                    }
+                ]
+            }
+        }
+
+        resolver = FTDDeviceResolver(data_model)
+        devices = resolver.get_resolved_inventory()
+
+        assert len(devices) == 1
+        assert devices[0]["hostname"] == "FTD-GOOD"
+
+        assert len(resolver.skipped_devices) == 1
+        assert resolver.skipped_devices[0]["device_id"] == "<unknown>"
 
 
 class TestFTDDeviceResolverFullInventory:

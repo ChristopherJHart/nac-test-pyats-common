@@ -1,8 +1,6 @@
 # SPDX-License-Identifier: MPL-2.0
 # Copyright (c) 2025 Daniel Schmidt
 
-# SPDX-License-Identifier: MPL-2.0
-
 """FTD device resolver for SSH/D2D testing.
 
 This module provides the FTDDeviceResolver class, which extends
@@ -70,7 +68,11 @@ class FTDDeviceResolver(BaseDeviceResolver):
     """
 
     def get_architecture_name(self) -> str:
-        """Return the architecture identifier."""
+        """Return the architecture identifier.
+
+        Returns "fmc" (not "ftd") because FMC is the architecture/controller;
+        FTD is the device type within that architecture.
+        """
         return "fmc"
 
     def get_schema_root_key(self) -> str:

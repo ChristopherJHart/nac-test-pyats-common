@@ -1,8 +1,6 @@
 # SPDX-License-Identifier: MPL-2.0
 # Copyright (c) 2025 Daniel Schmidt
 
-# SPDX-License-Identifier: MPL-2.0
-
 """FTD-specific base test class for SSH/Direct-to-Device testing.
 
 This module provides the FTDTestBase class, which extends the generic SSHTestBase
